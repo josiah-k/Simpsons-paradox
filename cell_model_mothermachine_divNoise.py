@@ -1,6 +1,5 @@
 import numpy as np
 from scipy import optimize
-import random
 
 class Cell_Population:
     def __init__(self,
@@ -12,7 +11,8 @@ class Cell_Population:
                     tau_r, # ribosome mean-reversion timescale
                     sigma_r=0, # volatility coefficient in ribosome expression
                     num_cells_init=3000,
-                    delta_t=0.05):
+                    delta_t=0.05, # (h)
+                    ):
         self.init_conditions = []
         self.num_cells_init = num_cells_init
         self.delta_t = delta_t
@@ -117,10 +117,10 @@ class Cell_Population:
         V = V_i + self.dVdt(V_i, t, a_i, phiR_i)*dt
 
         noise = np.sqrt(2*self.sigma_phiRmax) * np.sqrt(dt) * np.random.normal(size=phiRmax_i.shape)
-        phiR_max = phiRmax_i + self.dpRmdt(t, phiRmax_i) + noise * phiRmax_i
+        phiR_max = phiRmax_i + self.dpRmdt(t, phiRmax_i)*dt + noise * phiRmax_i
 
         noise = np.sqrt(2*self.sigma_u) * np.sqrt(dt) * np.random.normal(size=fI_i.shape)
-        f_I = fI_i + self.dpFidt(t, fI_i) + noise * fI_i
+        f_I = fI_i + self.dpFidt(t, fI_i)*dt + noise * fI_i
         f_I = f_I.clip(0,phiR_max)
 
         # check to make sure value is physical
@@ -184,44 +184,17 @@ class Cell_Population:
 
     # simulatation implementation
 
-    def simulate_population(self, true_num_cells, n_steps=1600, threshold=3000):
+    def simulate_population(self, n_steps=1600):
 
         # unpacking initial conditions for each cell trajectory
         phiR_birth, a_birth, X_birth, V_birth, phiRmax_birth, phiI_birth, fI_birth = self.init_conditions.copy()
         if any(np.isnan(a_birth)) or any(a_birth < 0): # checking to make sure nan values are not present
             print('a_start:',a_birth)
             raise ValueError(f'Simulation error, nan or negative values present')
-        num_cells_saved = len(V_birth)
-
-        if num_cells_saved > threshold:
-            # downsampling if population exceeds threshold
-            row_ids = random.sample(range(num_cells_saved), threshold)
-            phiR_birth = phiR_birth[row_ids]
-            a_birth = a_birth[row_ids]
-            X_birth = X_birth[row_ids]
-            V_birth = V_birth[row_ids]
-            phiRmax_birth = phiRmax_birth[row_ids]
-            phiI_birth = phiI_birth[row_ids]
-            fI_birth = fI_birth[row_ids]
-            num_cells = threshold
-        elif (num_cells_saved < threshold) & (true_num_cells > num_cells_saved):
-            # upsampling if population decreased, but is still above number currently being simulated
-            num_cells_add = int(np.min((threshold-num_cells_saved, true_num_cells-num_cells_saved)))
-            num_cells = int(num_cells_saved+num_cells_add)
-            phiR_birth = self.upsample(phiR_birth, num_cells_add, self.phiR_max, self.phiR_min)
-            a_birth = self.upsample(a_birth, num_cells_add, clip_low=1e-7)
-            X_birth = self.upsample(X_birth, num_cells_add)
-            V_birth = self.upsample(V_birth, num_cells_add, np.max(V_birth), np.min(V_birth))
-            phiRmax_birth = self.upsample(phiRmax_birth, num_cells_add, np.max(phiRmax_birth), np.min(phiRmax_birth))
-            phiI_birth = self.upsample(phiI_birth, num_cells_add, np.max(phiI_birth), np.min(phiI_birth))
-            fI_birth = self.upsample(fI_birth, num_cells_add, np.max(fI_birth), np.min(fI_birth))
-        else:
-            num_cells = num_cells_saved
 
         iterations = int((self.t_stop - self.t_start)*n_steps)
         t = np.linspace(self.t_start,self.t_stop,iterations)
         dt = (self.t_stop - self.t_start)/iterations
-        cell_count = [num_cells]
 
         species_stack = np.array([phiR_birth, a_birth, X_birth, V_birth, phiRmax_birth, phiI_birth, fI_birth])
         for i in range(1, iterations):
@@ -233,19 +206,10 @@ class Cell_Population:
             if birth_check.sum() != 0:
                 r = np.random.normal(0.5, 0.04, birth_check.sum())
 
-                # X_stack_children = species_stack[:,birth_check].copy()
-                # X_stack_children[4,:] = 0
-                # X_stack_children[5,:] = X_stack_children[5,:] * (1 - r)
-
                 species_stack[2,birth_check] = 0
                 species_stack[3,birth_check] = species_stack[3,birth_check] * r
                 species_stack[4,birth_check] = species_stack[4,birth_check] * np.random.normal(1, self.ribo_div_noise, birth_check.sum())
             species_stack[4,:] = species_stack[4,:].clip(0.3,0.8)
-
-                # species_stack = np.concatenate((species_stack, X_stack_children), -1)
-
-            cell_count.append(species_stack.shape[1])
-
 
             if self.num_cells_init == 1:
                 self.single_cell_phys_state = np.concatenate((self.single_cell_phys_state, species_stack), axis=-1)
@@ -254,16 +218,16 @@ class Cell_Population:
         self.t_start = self.t_stop
         self.t_stop += self.delta_t
 
-        if true_num_cells > threshold:
-            true_num_cells_next = np.round(true_num_cells * (cell_count[-1] / num_cells))
-        else:
-            true_num_cells_next = cell_count[-1]
 
         # calculating growth rate and activity
         growth_rate = self.GrowthRate(species_stack[1,:], species_stack[0,:])
         activity = species_stack[6,:] * growth_rate
+        phi_R = species_stack[0,:]
+        phiRmax = species_stack[4,:]
+        volume = species_stack[3,:]
+        phi_I = species_stack[5,:]
 
-        return t[-1], true_num_cells_next, growth_rate, activity
+        return growth_rate, activity, phi_R, phiRmax, volume, phi_I
 
 
 if __name__ == '__main__':
