@@ -1,1 +1,1 @@
-Use "main_divNoise.ipynb" to simulate bacterial growth and division to visualize activity vs growth rate for different amounts of ribosome division noise, unnecessary protein expression, and nutrient quality.
+Use "main_divNoise.ipynb" notebook to simulate bacterial growth and division to visualize activity vs growth rate for different amounts of ribosome division noise, unnecessary protein expression, and nutrient quality. Activity vs growth rate relationships found are an example of [Simpson's paradox](https://en.wikipedia.org/wiki/Simpson%27s_paradox).
